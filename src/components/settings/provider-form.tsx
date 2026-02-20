@@ -16,13 +16,14 @@ export function ProviderForm() {
     setApiBaseUrl,
     setAuthToken,
     setModelName,
+    saveToStorage,
   } = useSettingsStore();
 
   const [testing, setTesting] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message: string;
-    models?: string[];
   } | null>(null);
 
   const handleTestConnection = async () => {
@@ -47,14 +48,23 @@ export function ProviderForm() {
       }
 
       const data = await res.json();
-      const models: string[] = (data.data || data)
+      const fetchedModels: string[] = (data.data || data)
         .map((m: { id?: string; name?: string }) => m.id || m.name)
         .filter(Boolean);
 
+      setModels(fetchedModels);
+
+      // Auto-select first model if none is set
+      if (!modelName && fetchedModels.length > 0) {
+        setModelName(fetchedModels[0]);
+      }
+
+      // Save settings on successful connection
+      saveToStorage();
+
       setTestResult({
         success: true,
-        message: `Connected! Found ${models.length} model${models.length !== 1 ? "s" : ""}.`,
-        models,
+        message: `Connected! Found ${fetchedModels.length} model${fetchedModels.length !== 1 ? "s" : ""}.`,
       });
     } catch (e) {
       setTestResult({
@@ -105,9 +115,9 @@ export function ProviderForm() {
         <div className="space-y-2">
           <Label htmlFor="model-name" className="flex items-center gap-2">
             <Cpu className="h-3.5 w-3.5" />
-            Model Name
+            Model
           </Label>
-          {testResult?.models && testResult.models.length > 0 ? (
+          {models.length > 0 ? (
             <select
               id="model-name"
               value={modelName}
@@ -115,7 +125,7 @@ export function ProviderForm() {
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             >
               <option value="">Select a model...</option>
-              {testResult.models.map((m) => (
+              {models.map((m) => (
                 <option key={m} value={m}>
                   {m}
                 </option>
@@ -126,7 +136,7 @@ export function ProviderForm() {
               id="model-name"
               value={modelName}
               onChange={(e) => setModelName(e.target.value)}
-              placeholder="gpt-4o, llama3, etc."
+              placeholder="gpt-4o, llama3, etc. (or test connection to browse)"
             />
           )}
         </div>

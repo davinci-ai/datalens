@@ -15,28 +15,28 @@ export function buildMosaicPlot(
   container: HTMLElement
 ): MosaicChartSpec {
   try {
-    const { chartType, encoding, sql, title } = instruction;
+    const { chartType, encoding, sql } = instruction;
 
-    const from = `__chart_${instruction.id.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const viewName = `__chart_${instruction.id.replace(/[^a-zA-Z0-9]/g, "_")}`;
 
-    const mark = buildMark(chartType, encoding, from, crossfilter);
+    // Register the SQL view BEFORE building the plot so data is available
+    vg.coordinator().exec(
+      `CREATE OR REPLACE VIEW "${viewName}" AS ${sql}`
+    );
+
+    const mark = buildMark(chartType, encoding, viewName, crossfilter);
     const width = container.clientWidth - 32;
     const height = container.clientHeight - 60;
 
+    // plot() takes only directive functions — marks, attributes, etc.
+    // Do NOT pass vg.from() here; it's only for mark constructors.
     const plot = vg.plot(
       mark,
-      vg.from(from, { filterBy: crossfilter }),
       vg.width(Math.max(200, width)),
       vg.height(Math.max(150, height)),
       vg.marginLeft(60),
-      vg.marginBottom(40),
-      ...(title ? [] : [])
+      vg.marginBottom(40)
     );
-
-    // Register the SQL as a virtual table via the coordinator
-    vg.coordinator().exec([
-      `CREATE OR REPLACE VIEW "${from}" AS ${sql}`,
-    ]);
 
     return { plot };
   } catch (e) {
@@ -47,31 +47,25 @@ export function buildMosaicPlot(
 function buildMark(
   chartType: string,
   encoding: ChartInstruction["encoding"],
-  from: string,
+  viewName: string,
   crossfilter: Selection
 ): unknown {
+  const source = vg.from(viewName, { filterBy: crossfilter });
   const opts: Record<string, unknown> = {};
 
   switch (chartType) {
     case "bar": {
-      if (encoding.x && encoding.y) {
-        opts.x = vg.column(encoding.x);
-        opts.y = vg.column(encoding.y);
-      }
+      if (encoding.x) opts.x = vg.column(encoding.x);
+      if (encoding.y) opts.y = vg.column(encoding.y);
       if (encoding.color) opts.fill = vg.column(encoding.color);
-      return vg.barY(vg.from(from, { filterBy: crossfilter }), {
-        ...opts,
-        channels: encoding.x
-          ? { select: vg.nearestX({ as: crossfilter }) }
-          : undefined,
-      });
+      return vg.barY(source, opts);
     }
 
     case "line": {
       if (encoding.x) opts.x = vg.column(encoding.x);
       if (encoding.y) opts.y = vg.column(encoding.y);
       if (encoding.color) opts.stroke = vg.column(encoding.color);
-      return vg.lineY(vg.from(from, { filterBy: crossfilter }), opts);
+      return vg.lineY(source, opts);
     }
 
     case "scatter": {
@@ -79,18 +73,19 @@ function buildMark(
       if (encoding.y) opts.y = vg.column(encoding.y);
       if (encoding.color) opts.fill = vg.column(encoding.color);
       if (encoding.size) opts.r = vg.column(encoding.size);
-      return vg.dot(vg.from(from, { filterBy: crossfilter }), opts);
+      return vg.dot(source, opts);
     }
 
     case "histogram": {
       const col = encoding.x || encoding.y;
       if (col) {
-        return vg.rectY(
-          vg.from(from, { filterBy: crossfilter }),
-          { x: vg.bin(vg.column(col)), y: vg.count(), fill: "steelblue" }
-        );
+        return vg.rectY(source, {
+          x: vg.bin(vg.column(col)),
+          y: vg.count(),
+          fill: "steelblue",
+        });
       }
-      return vg.rectY(vg.from(from, { filterBy: crossfilter }), {
+      return vg.rectY(source, {
         y: vg.count(),
         fill: "steelblue",
       });
@@ -100,30 +95,28 @@ function buildMark(
       if (encoding.x) opts.x = vg.column(encoding.x);
       if (encoding.y) opts.y = vg.column(encoding.y);
       if (encoding.color) opts.fill = vg.column(encoding.color);
-      return vg.areaY(vg.from(from, { filterBy: crossfilter }), opts);
+      return vg.areaY(source, opts);
     }
 
     case "heatmap": {
       if (encoding.x) opts.x = vg.column(encoding.x);
       if (encoding.y) opts.y = vg.column(encoding.y);
-      return vg.rect(vg.from(from, { filterBy: crossfilter }), {
+      return vg.rect(source, {
         ...opts,
         fill: vg.count(),
       });
     }
 
     case "boxplot": {
-      // vgplot has no boxY — fall back to dotY for distribution view
       if (encoding.x) opts.x = vg.column(encoding.x);
       if (encoding.y) opts.y = vg.column(encoding.y);
-      return vg.dotY(vg.from(from, { filterBy: crossfilter }), opts);
+      return vg.dotY(source, opts);
     }
 
     default: {
-      // Fallback to bar
       if (encoding.x) opts.x = vg.column(encoding.x);
       if (encoding.y) opts.y = vg.column(encoding.y);
-      return vg.barY(vg.from(from, { filterBy: crossfilter }), opts);
+      return vg.barY(source, opts);
     }
   }
 }
